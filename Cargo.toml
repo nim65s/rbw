@@ -68,6 +68,7 @@ url = "2.5.4"
 urlencoding = "2.1.3"
 uuid = { version = "1.11.0", features = ["v4"] }
 zeroize = "1.8.1"
+zbus = { version = "5.2.0", features = ["tokio"] }
 
 [package.metadata.deb]
 depends = "pinentry"
