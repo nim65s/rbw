@@ -19,23 +19,21 @@ use anyhow::Context as _;
 
 mod actions;
 mod agent;
+mod commands;
 mod daemon;
 mod debugger;
-mod notifications;
+mod service;
 mod sock;
-mod timeout;
 
 async fn tokio_main(
     startup_ack: Option<crate::daemon::StartupAck>,
 ) -> anyhow::Result<()> {
-    let listener = crate::sock::listen()?;
-
     if let Some(startup_ack) = startup_ack {
         startup_ack.ack()?;
     }
 
     let agent = crate::agent::Agent::new()?;
-    agent.run(listener).await?;
+    agent.run().await?;
 
     Ok(())
 }

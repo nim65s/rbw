@@ -1,52 +1,40 @@
 use anyhow::Context as _;
-use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
+use std::io::{BufRead as _, Write as _};
 
-pub struct Sock(tokio::net::UnixStream);
+pub struct Sock(std::os::unix::net::UnixStream);
 
 impl Sock {
-    pub fn new(s: tokio::net::UnixStream) -> Self {
-        Self(s)
+    // not returning anyhow::Result here because we want to be able to handle
+    // specific kinds of std::io::Results differently
+    pub fn connect() -> std::io::Result<Self> {
+        Ok(Self(std::os::unix::net::UnixStream::connect(
+            rbw::dirs::socket_file(),
+        )?))
     }
 
-    pub async fn send(
+    pub fn send(
         &mut self,
-        res: &rbw::protocol::Response,
+        msg: &rbw::protocol::Request,
     ) -> anyhow::Result<()> {
         let Self(sock) = self;
         sock.write_all(
-            serde_json::to_string(res)
-                .context("failed to serialize message")?
+            serde_json::to_string(msg)
+                .context("failed to serialize message to agent")?
                 .as_bytes(),
         )
-        .await
-        .context("failed to write message to socket")?;
+        .context("failed to send message to agent")?;
         sock.write_all(b"\n")
-            .await
-            .context("failed to write message to socket")?;
+            .context("failed to send message to agent")?;
         Ok(())
     }
 
-    pub async fn recv(
-        &mut self,
-    ) -> anyhow::Result<std::result::Result<rbw::protocol::Request, String>>
-    {
+    pub fn recv(&mut self) -> anyhow::Result<rbw::protocol::Response> {
         let Self(sock) = self;
-        let mut buf = tokio::io::BufStream::new(sock);
+        let mut buf = std::io::BufReader::new(sock);
         let mut line = String::new();
         buf.read_line(&mut line)
-            .await
-            .context("failed to read message from socket")?;
-        Ok(serde_json::from_str(&line)
-            .map_err(|e| format!("failed to parse message '{line}': {e}")))
+            .context("failed to read message from agent")?;
+        serde_json::from_str(&line)
+            .context("failed to parse message from agent")
     }
-}
-
-pub fn listen() -> anyhow::Result<tokio::net::UnixListener> {
-    let path = rbw::dirs::socket_file();
-    // if the socket already doesn't exist, that's fine
-    let _ = std::fs::remove_file(&path);
-    let sock = tokio::net::UnixListener::bind(&path)
-        .context("failed to listen on socket")?;
-    log::debug!("listening on socket {}", path.to_string_lossy());
-    Ok(sock)
 }

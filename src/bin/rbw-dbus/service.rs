@@ -11,108 +11,168 @@
 //!
 //! [Writing a client proxy]: https://dbus2.github.io/zbus/client.html
 //! [D-Bus standard interfaces]: https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces,
-use zbus::proxy;
-#[proxy(interface = "org.freedesktop.Secret.Service", assume_defaults = true)]
-pub trait Service {
+
+use crate::commands;
+use zbus::{
+    interface,
+    zvariant::{OwnedObjectPath, OwnedValue, Str},
+};
+
+#[derive(serde::Deserialize)]
+pub struct Service {
+    pub collections: Vec<String>,
+}
+
+#[interface(name = "org.freedesktop.Secret.Service")]
+impl Service {
     /// CreateCollection method
     fn create_collection(
-        &self,
-        properties: std::collections::HashMap<
-            &str,
-            &zbus::zvariant::Value<'_>,
-        >,
+        &mut self,
+        _properties: std::collections::HashMap<&str, OwnedValue>,
         alias: &str,
-    ) -> zbus::Result<(
-        zbus::zvariant::OwnedObjectPath,
-        zbus::zvariant::OwnedObjectPath,
-    )>;
+    ) -> (OwnedObjectPath, OwnedObjectPath) {
+        let collection = OwnedObjectPath::try_from(format!(
+            "/org/freedesktop/secrets/collection/rbw-{alias}"
+        ))
+        .unwrap();
+        let alias = String::from(alias);
+        if !self.collections.contains(&alias) {
+            self.collections.push(alias);
+        }
+        let prompt = OwnedObjectPath::try_from("/").unwrap();
+        (collection, prompt)
+    }
 
     /// GetSecrets method
     fn get_secrets(
         &self,
-        items: &[&zbus::zvariant::ObjectPath<'_>],
-        session: &zbus::zvariant::ObjectPath<'_>,
-    ) -> zbus::Result<
-        std::collections::HashMap<
-            zbus::zvariant::OwnedObjectPath,
-            (zbus::zvariant::OwnedObjectPath, Vec<u8>, Vec<u8>, String),
-        >,
-    >;
+        items: Vec<OwnedObjectPath>,
+        session: OwnedObjectPath,
+    ) -> std::collections::HashMap<
+        OwnedObjectPath,
+        (OwnedObjectPath, Vec<u8>, Vec<u8>, String),
+    > {
+        let db = commands::load_db().unwrap();
+        let mut secrets = std::collections::HashMap::new();
+        for item in items {
+            // /org/freedesktop/secrets/collection/xxxx/iiii
+            let mut v: Vec<&str> = item.split('/').collect();
+            let needle = v.pop().unwrap();
+            let folder = v.pop().unwrap().strip_prefix("rbw-");
+            let (_, decrypted) = commands::find_entry(
+                &db,
+                &commands::Needle::Name(String::from(needle)),
+                None,
+                folder,
+                false,
+            )
+            .unwrap();
+            if let commands::DecryptedData::Login { password, .. } =
+                decrypted.data
+            {
+                //let sec = Secret::new(session, password.unwrap().as_bytes());
+                secrets.insert(
+                    item,
+                    (
+                        session.clone(),
+                        Vec::new(),
+                        password.unwrap().as_bytes().to_vec(),
+                        String::from("text/plain; charset=utf8"),
+                    ),
+                );
+            }
+        }
+
+        secrets
+    }
 
     /// Lock method
     fn lock(
         &self,
-        objects: &[&zbus::zvariant::ObjectPath<'_>],
-    ) -> zbus::Result<(
-        Vec<zbus::zvariant::OwnedObjectPath>,
-        zbus::zvariant::OwnedObjectPath,
-    )>;
+        _objects: Vec<OwnedObjectPath>,
+    ) -> (Vec<OwnedObjectPath>, OwnedObjectPath) {
+        commands::lock().unwrap();
+        let locked = Vec::new();
+        let prompt = OwnedObjectPath::try_from("/").unwrap();
+        (locked, prompt)
+    }
 
     /// OpenSession method
     fn open_session(
         &self,
-        algorithm: &str,
-        input: &zbus::zvariant::Value<'_>,
-    ) -> zbus::Result<(
-        zbus::zvariant::OwnedValue,
-        zbus::zvariant::OwnedObjectPath,
-    )>;
+        _algorithm: &str,
+        _input: OwnedValue,
+    ) -> (Str, OwnedObjectPath) {
+        let output = String::from("");
+        let result =
+            OwnedObjectPath::try_from("/org/freedesktop/secrets/session/rbw")
+                .unwrap();
+        (output.into(), result)
+    }
+    /*
 
     /// ReadAlias method
-    fn read_alias(
-        &self,
-        name: &str,
-    ) -> zbus::Result<zbus::zvariant::OwnedObjectPath>;
+    fn read_alias(&self, name: &str) -> zbus::Result<zbus::zvariant::OwnedObjectPath> {}
+    */
 
     /// SearchItems method
     fn search_items(
         &self,
-        attributes: std::collections::HashMap<&str, &str>,
-    ) -> zbus::Result<(
-        Vec<zbus::zvariant::OwnedObjectPath>,
-        Vec<zbus::zvariant::OwnedObjectPath>,
-    )>;
+        _attributes: std::collections::HashMap<&str, &str>,
+    ) -> (Vec<OwnedObjectPath>, Vec<OwnedObjectPath>) {
+        let mut unlocked = Vec::new();
+        for c in &self.collections {
+            unlocked.push(OwnedObjectPath::try_from(c.clone()).unwrap());
+        }
+        let locked = Vec::new();
+        (unlocked, locked)
+    }
+    /*
 
     /// SetAlias method
     fn set_alias(
         &self,
         name: &str,
         collection: &zbus::zvariant::ObjectPath<'_>,
-    ) -> zbus::Result<()>;
+    ) -> zbus::Result<()> {
+    }
+    */
 
     /// Unlock method
     fn unlock(
         &self,
-        objects: &[&zbus::zvariant::ObjectPath<'_>],
-    ) -> zbus::Result<(
-        Vec<zbus::zvariant::OwnedObjectPath>,
-        zbus::zvariant::OwnedObjectPath,
-    )>;
+        _objects: Vec<OwnedObjectPath>,
+    ) -> (Vec<OwnedObjectPath>, OwnedObjectPath) {
+        commands::unlock().unwrap();
+        let unlocked = Vec::new();
+        let prompt = OwnedObjectPath::try_from("/").unwrap();
+        (unlocked, prompt)
+    }
+    /*
 
     /// CollectionChanged signal
     #[zbus(signal)]
-    fn collection_changed(
+    async fn collection_changed(
         &self,
         collection: zbus::zvariant::ObjectPath<'_>,
     ) -> zbus::Result<()>;
 
     /// CollectionCreated signal
     #[zbus(signal)]
-    fn collection_created(
+    async fn collection_created(
         &self,
         collection: zbus::zvariant::ObjectPath<'_>,
     ) -> zbus::Result<()>;
 
     /// CollectionDeleted signal
     #[zbus(signal)]
-    fn collection_deleted(
+    async fn collection_deleted(
         &self,
         collection: zbus::zvariant::ObjectPath<'_>,
     ) -> zbus::Result<()>;
 
     /// Collections property
     #[zbus(property)]
-    fn collections(
-        &self,
-    ) -> zbus::Result<Vec<zbus::zvariant::OwnedObjectPath>>;
+    fn collections(&self) -> zbus::Result<Vec<zbus::zvariant::OwnedObjectPath>> {}
+    */
 }
